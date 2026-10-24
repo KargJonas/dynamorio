@@ -10845,40 +10845,29 @@ handle_modified_code(dcontext_t *dcontext, cache_pc instr_cache_pc, app_pc instr
              */
             return instr_app_pc;
         } else {
-            /* Not selfmod, but target and bb region may still overlap -
-             * heuristic: split the region up -- assume will keep writing
-             * to higher addresses and keep executing at higher addresses.
+            /* Not selfmod: the writer's bb is on other pages of the region.
+             * Only the pages written stop being executable.
              */
-            if (tgt_pend < bb_pstart) {
-                /* make all pages from tgt_pstart up to bb_pstart or
-                 * region end (which ever is first) non-exec */
-                /* XXX - CHECK - should we really be starting at
-                 * base_pc instead? Not clear why we shouldn't start at
-                 * region start (like we would if we didn't have an
-                 * overlap). */
-                flush_start = tgt_pstart;
-                ASSERT(bb_pstart < (base_pc + size) && bb_pstart > tgt_pstart);
-                flush_size = bb_pstart - tgt_pstart;
-            } else if (tgt_pstart > bb_pend) {
-                /* make all pages from tgt_pstart to end of region non-exec */
-                flush_start = tgt_pstart;
-                flush_size = (base_pc + size) - tgt_pstart;
-            } else {
-                /* should never get here -- all cases covered above */
-                ASSERT_NOT_REACHED();
-            }
+            flush_start = tgt_pstart;
+            flush_size = tgt_pend + PAGE_SIZE - tgt_pstart;
             LOG(THREAD, LOG_VMAREAS, 2,
                 "splitting region up, flushing just " PFX "-" PFX "\n", flush_start,
                 flush_start + flush_size);
         }
     } else {
         ASSERT(!info.overlap || (f != NULL && TESTANY(FRAG_IS_TRACE, f->flags)));
-        /* instr not in region, so move entire region off the executable list */
-        flush_start = base_pc;
-        flush_size = size;
+        /* The writer is not in the region: only the pages written stop being
+         * executable, and the rest of the region stays read-only with its code
+         * cached.  Flushing the whole region would flush it again at every
+         * write to data that shares a region with code, forever.  A page
+         * written and run again and again turns to sandboxing on its own
+         * (-ro2sandbox_threshold).
+         */
+        flush_start = (app_pc)PAGE_START(target);
+        flush_size = (app_pc)PAGE_START(target + opnd_size) + PAGE_SIZE - flush_start;
         LOG(THREAD, LOG_VMAREAS, 2,
-            "instr not in region, flushing entire " PFX "-" PFX "\n", flush_start,
-            flush_start + flush_size);
+            "instr not in region, flushing just the written " PFX "-" PFX "\n",
+            flush_start, flush_start + flush_size);
     }
 
     /* DGC_DIAGNOSTICS: have flusher pass target to

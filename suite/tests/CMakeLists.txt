@@ -6800,6 +6800,8 @@ if (X86 OR AARCH64 AND NOT (APPLE AND AARCH64))
 endif (X86 OR AARCH64 AND NOT (APPLE AND AARCH64))
 
 if (X86) # XXX i#1551, i#1569: port asm to ARM and AArch64
+  # Writes x86 machine code into a writable region that also holds data.
+  tobuild(security-common.selfmod-data security-common/selfmod-data.c)
   if (NOT APPLE) # XXX i#58: port test to MacOS
     tobuild(security-common.selfmod-big security-common/selfmod-big.c)
     tochcon(security-common.selfmod-big textrel_shlib_t)
