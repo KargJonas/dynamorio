@@ -601,6 +601,32 @@ module_num_program_headers(app_pc base)
  * wait to access .dynamic when it gets mapped in.  We basically try on each ELF
  * segment until we hit the one with .dynamic.
  */
+/* Returns where the program headers of the loaded module ma are in memory: in the
+ * segment that maps their file offset.  That is e_phoff from the module's start only
+ * when the first segment maps them, and not when a tool such as patchelf has moved
+ * them into a segment of their own, whose file offset differs from its offset in
+ * memory (i#2344).  Returns NULL if no segment maps them.
+ */
+static ELF_PROGRAM_HEADER_TYPE *
+module_loaded_program_headers(module_area_t *ma)
+{
+    ELF_HEADER_TYPE *elf_hdr = (ELF_HEADER_TYPE *)ma->start;
+    size_t size = elf_hdr->e_phnum * elf_hdr->e_phentsize;
+    uint i;
+    if (elf_hdr->e_phoff == 0)
+        return NULL;
+    for (i = 0; i < ma->os_data.num_segments; i++) {
+        module_segment_t *seg = &ma->os_data.segments[i];
+        /* The segment's start is page-aligned, and so is its offset here. */
+        uint64 offset = ALIGN_BACKWARD(seg->offset, PAGE_SIZE);
+        if (elf_hdr->e_phoff >= offset &&
+            elf_hdr->e_phoff + size <= offset + (seg->end - seg->start)) {
+            return (ELF_PROGRAM_HEADER_TYPE *)(seg->start + (elf_hdr->e_phoff - offset));
+        }
+    }
+    return NULL;
+}
+
 void
 os_module_update_dynamic_info(app_pc base, size_t size, bool at_map)
 {
@@ -612,14 +638,12 @@ os_module_update_dynamic_info(app_pc base, size_t size, bool at_map)
         char *soname;
         ptr_int_t load_delta = ma->start - ma->os_data.base_address;
         ELF_HEADER_TYPE *elf_hdr = (ELF_HEADER_TYPE *)ma->start;
+        ELF_PROGRAM_HEADER_TYPE *phdrs = module_loaded_program_headers(ma);
         ASSERT(base >= ma->start && base + size <= ma->end);
-        if (elf_hdr->e_phoff != 0 &&
-            elf_hdr->e_phoff + elf_hdr->e_phnum * elf_hdr->e_phentsize <=
-                ma->end - ma->start) {
+        if (phdrs != NULL) {
             for (i = 0; i < elf_hdr->e_phnum; i++) {
                 ELF_PROGRAM_HEADER_TYPE *prog_hdr =
-                    (ELF_PROGRAM_HEADER_TYPE *)(ma->start + elf_hdr->e_phoff +
-                                                i * elf_hdr->e_phentsize);
+                    (ELF_PROGRAM_HEADER_TYPE *)((app_pc)phdrs + i * elf_hdr->e_phentsize);
                 if (prog_hdr->p_type == PT_DYNAMIC) {
                     module_fill_os_data(prog_hdr, ma->os_data.base_address,
                                         ma->os_data.base_address + (ma->end - ma->start),

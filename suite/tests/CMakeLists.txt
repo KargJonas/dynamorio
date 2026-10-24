@@ -2531,6 +2531,25 @@ if (NOT MACOS AND NOT ANDROID)
   DynamoRIO_get_full_path(modules_libname client.modules.appdll "${location_suffix}")
   tobuild_ci(client.modules client-interface/modules.c "" "" "${modules_libname}")
 endif ()
+# i#2344: a library whose program headers lie in a segment of their own at a file
+# offset that is not their offset in memory, as patchelf 0.9 moved them.  The helper
+# runs on the build machine and reads ELF64.
+if (LINUX AND X86 AND X64 AND NOT ANDROID AND NOT CMAKE_CROSSCOMPILING)
+  tobuild_appdll(client.moved_phdrs client-interface/moved_phdrs.c)
+  # Segments aligned as older linkers aligned them, so that the first mapping of
+  # the file does not reach the late segment.
+  append_property_string(TARGET client.moved_phdrs.appdll LINK_FLAGS
+    "-Wl,-z,max-page-size=0x200000 -Wl,-z,noseparate-code")
+  add_executable(client.moved_phdrs.move client-interface/moved_phdrs.move.c)
+  DynamoRIO_get_full_path(moved_phdrs_libname client.moved_phdrs.appdll
+    "${location_suffix}")
+  add_dependencies(client.moved_phdrs.appdll client.moved_phdrs.move)
+  add_custom_command(TARGET client.moved_phdrs.appdll POST_BUILD
+    COMMAND client.moved_phdrs.move ${moved_phdrs_libname} ${moved_phdrs_libname}.moved
+    VERBATIM)
+  tobuild_ci(client.moved_phdrs client-interface/moved_phdrs.c "" ""
+    "${moved_phdrs_libname}.moved")
+endif ()
 if (X86) # XXX i#1551, i#1569: port to ARM and AArch64
   tobuild_ci(client.alloc client-interface/alloc.c ""
     # For the subtest "targeting upper 2GB of low 4GB" we move -vm_base out of the
